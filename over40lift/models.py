@@ -34,22 +34,103 @@ class MuscleGroup(str, Enum):
     ANKLES = "ankles"
 
 
+# Which body-diagram view (front/back) each muscle group is shown under in
+# the Soreness tab. Each muscle appears in exactly one view — the
+# underlying soreness state is the same regardless of which view it's
+# tapped from, this just controls layout.
+BODY_VIEW_FRONT: tuple[MuscleGroup, ...] = (
+    MuscleGroup.NECK, MuscleGroup.SHOULDERS, MuscleGroup.CHEST,
+    MuscleGroup.BICEPS, MuscleGroup.FOREARMS, MuscleGroup.WRISTS,
+    MuscleGroup.CORE, MuscleGroup.HIPS, MuscleGroup.QUADS,
+    MuscleGroup.KNEES, MuscleGroup.ANKLES,
+)
+BODY_VIEW_BACK: tuple[MuscleGroup, ...] = (
+    MuscleGroup.UPPER_BACK, MuscleGroup.LATS, MuscleGroup.TRICEPS,
+    MuscleGroup.ELBOWS, MuscleGroup.LOWER_BACK, MuscleGroup.GLUTES,
+    MuscleGroup.HAMSTRINGS, MuscleGroup.CALVES,
+)
+
+
 class Equipment(str, Enum):
+    # Free weights
     BARBELL = "barbell"
     DUMBBELLS = "dumbbells"
     KETTLEBELL = "kettlebell"
+    EZ_CURL_BAR = "ez_curl_bar"
+    TRAP_BAR = "trap_bar"
+    SAFETY_SQUAT_BAR = "safety_squat_bar"
     BENCH = "bench"
     SQUAT_RACK = "squat_rack"
-    PULL_UP_BAR = "pull_up_bar"
+    POWER_RACK = "power_rack"
+    SMITH_MACHINE = "smith_machine"
+    LANDMINE = "landmine_attachment"
+    # Machines
     CABLE_MACHINE = "cable_machine"
+    LAT_PULLDOWN = "lat_pulldown_machine"
     LEG_PRESS = "leg_press"
-    RESISTANCE_BANDS = "resistance_bands"
-    BATTLE_ROPES = "battle_ropes"
-    ROWING_MACHINE = "rowing_machine"
+    LEG_EXTENSION = "leg_extension_machine"
+    LEG_CURL_MACHINE = "leg_curl_machine"
+    HACK_SQUAT = "hack_squat_machine"
+    CHEST_PRESS_MACHINE = "chest_press_machine"
+    SHOULDER_PRESS_MACHINE = "shoulder_press_machine"
+    PEC_DECK = "pec_deck"
+    # Cardio
+    TREADMILL = "treadmill"
     ASSAULT_BIKE = "assault_bike"
+    SPIN_BIKE = "spin_bike"
+    ROWING_MACHINE = "rowing_machine"
+    SKI_ERG = "ski_erg"
+    STAIR_CLIMBER = "stair_climber"
+    ELLIPTICAL = "elliptical"
+    # CrossFit / functional
+    PULL_UP_BAR = "pull_up_bar"
+    GYMNASTIC_RINGS = "gymnastic_rings"
+    CLIMBING_ROPE = "climbing_rope"
+    BATTLE_ROPES = "battle_ropes"
     MEDICINE_BALL = "medicine_ball"
+    SLAM_BALL = "slam_ball"
+    WALL_BALL = "wall_ball"
+    PLYO_BOX = "plyo_box"
+    JUMP_ROPE = "jump_rope"
+    SLED = "sled_prowler"
+    FARMERS_CARRY_HANDLES = "farmers_carry_handles"
+    GHD = "ghd_glute_ham_developer"
+    DIP_STATION = "dip_station"
     TRX = "trx_suspension_trainer"
+    RESISTANCE_BANDS = "resistance_bands"
+    # Other
+    FOAM_ROLLER = "foam_roller"
     BODYWEIGHT_ONLY = "bodyweight_only"
+
+
+EQUIPMENT_CATEGORIES: dict[str, tuple[Equipment, ...]] = {
+    "Free weights": (
+        Equipment.BARBELL, Equipment.DUMBBELLS, Equipment.KETTLEBELL,
+        Equipment.EZ_CURL_BAR, Equipment.TRAP_BAR, Equipment.SAFETY_SQUAT_BAR,
+        Equipment.BENCH, Equipment.SQUAT_RACK, Equipment.POWER_RACK,
+        Equipment.SMITH_MACHINE, Equipment.LANDMINE,
+    ),
+    "Machines": (
+        Equipment.CABLE_MACHINE, Equipment.LAT_PULLDOWN, Equipment.LEG_PRESS,
+        Equipment.LEG_EXTENSION, Equipment.LEG_CURL_MACHINE, Equipment.HACK_SQUAT,
+        Equipment.CHEST_PRESS_MACHINE, Equipment.SHOULDER_PRESS_MACHINE, Equipment.PEC_DECK,
+    ),
+    "Cardio": (
+        Equipment.TREADMILL, Equipment.ASSAULT_BIKE, Equipment.SPIN_BIKE,
+        Equipment.ROWING_MACHINE, Equipment.SKI_ERG, Equipment.STAIR_CLIMBER,
+        Equipment.ELLIPTICAL,
+    ),
+    "CrossFit / functional": (
+        Equipment.PULL_UP_BAR, Equipment.GYMNASTIC_RINGS, Equipment.CLIMBING_ROPE,
+        Equipment.BATTLE_ROPES, Equipment.MEDICINE_BALL, Equipment.SLAM_BALL,
+        Equipment.WALL_BALL, Equipment.PLYO_BOX, Equipment.JUMP_ROPE,
+        Equipment.SLED, Equipment.FARMERS_CARRY_HANDLES, Equipment.GHD,
+        Equipment.DIP_STATION, Equipment.TRX, Equipment.RESISTANCE_BANDS,
+    ),
+    "Other": (
+        Equipment.FOAM_ROLLER, Equipment.BODYWEIGHT_ONLY,
+    ),
+}
 
 
 class MovementPattern(str, Enum):
