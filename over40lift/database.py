@@ -84,7 +84,14 @@ CREATE TABLE IF NOT EXISTS readiness_feedback (
 
 
 class Database:
-    """Thin data-access layer, one instance per SQLite file."""
+    """Thin data-access layer, one instance per SQLite file.
+
+    check_same_thread=False plus an internal lock make this safe to use
+    from a Streamlit app: Streamlit Cloud/`st.cache_resource` can invoke
+    this object from a different thread than the one that created it, and
+    plain sqlite3 connections aren't safe to share across threads without
+    that combination.
+    """
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH):
         self.db_path = Path(db_path)
@@ -108,66 +115,72 @@ class Database:
     # ---- users ----
 
     def get_or_create_user(self, name: str) -> int:
-        cur = self._conn.execute("SELECT id FROM users WHERE name = ?", (name,))
-        row = cur.fetchone()
-        if row:
-            return row["id"]
-        cur = self._conn.execute(
-            "INSERT INTO users (name, created_at) VALUES (?, ?)",
-            (name, datetime.now().isoformat()),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute("SELECT id FROM users WHERE name = ?", (name,))
+            row = cur.fetchone()
+            if row:
+                return row["id"]
+            cur = self._conn.execute(
+                "INSERT INTO users (name, created_at) VALUES (?, ?)",
+                (name, datetime.now().isoformat()),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def list_users(self) -> list[str]:
-        cur = self._conn.execute("SELECT name FROM users ORDER BY name")
-        return [row["name"] for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute("SELECT name FROM users ORDER BY name")
+            return [row["name"] for row in cur.fetchall()]
 
     # ---- equipment ----
 
     def set_user_equipment(self, user_id: int, equipment_keys: set[str]) -> None:
-        self._conn.execute("DELETE FROM user_equipment WHERE user_id = ?", (user_id,))
-        self._conn.executemany(
-            "INSERT INTO user_equipment (user_id, equipment_key) VALUES (?, ?)",
-            [(user_id, key) for key in equipment_keys],
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM user_equipment WHERE user_id = ?", (user_id,))
+            self._conn.executemany(
+                "INSERT INTO user_equipment (user_id, equipment_key) VALUES (?, ?)",
+                [(user_id, key) for key in equipment_keys],
+            )
+            self._conn.commit()
 
     def get_user_equipment(self, user_id: int) -> set[str]:
-        cur = self._conn.execute(
-            "SELECT equipment_key FROM user_equipment WHERE user_id = ?", (user_id,)
-        )
-        return {row["equipment_key"] for row in cur.fetchall()}
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT equipment_key FROM user_equipment WHERE user_id = ?", (user_id,)
+            )
+            return {row["equipment_key"] for row in cur.fetchall()}
 
     # ---- soreness / injuries ----
 
     def add_soreness_report(self, user_id: int, report: SorenessReport) -> int:
-        cur = self._conn.execute(
-            """INSERT INTO soreness_reports
-               (user_id, muscle_group, level, reported_at, notes)
-               VALUES (?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                report.muscle_group.value,
-                report.level.value,
-                report.reported_at.isoformat(),
-                report.notes,
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO soreness_reports
+                   (user_id, muscle_group, level, reported_at, notes)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    report.muscle_group.value,
+                    report.level.value,
+                    report.reported_at.isoformat(),
+                    report.notes,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def get_current_soreness(self, user_id: int) -> dict[MuscleGroup, SorenessLevel]:
         """Latest report per muscle group (most recent report wins)."""
-        cur = self._conn.execute(
-            """SELECT muscle_group, level, reported_at FROM soreness_reports
-               WHERE user_id = ? ORDER BY reported_at ASC""",
-            (user_id,),
-        )
-        latest: dict[MuscleGroup, SorenessLevel] = {}
-        for row in cur.fetchall():
-            latest[MuscleGroup(row["muscle_group"])] = SorenessLevel(row["level"])
-        return latest
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT muscle_group, level, reported_at FROM soreness_reports
+                   WHERE user_id = ? ORDER BY reported_at ASC""",
+                (user_id,),
+            )
+            latest: dict[MuscleGroup, SorenessLevel] = {}
+            for row in cur.fetchall():
+                latest[MuscleGroup(row["muscle_group"])] = SorenessLevel(row["level"])
+            return latest
 
     def clear_soreness(self, user_id: int, muscle_group: MuscleGroup) -> None:
         """Mark a muscle group as no longer sore by recording a fresh 'clear'.
@@ -175,39 +188,43 @@ class Database:
         Implemented by deleting existing rows for that muscle so
         get_current_soreness no longer reports it.
         """
-        self._conn.execute(
-            "DELETE FROM soreness_reports WHERE user_id = ? AND muscle_group = ?",
-            (user_id, muscle_group.value),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM soreness_reports WHERE user_id = ? AND muscle_group = ?",
+                (user_id, muscle_group.value),
+            )
+            self._conn.commit()
 
     # ---- goals ----
 
     def add_goal(self, user_id: int, goal: Goal) -> int:
-        cur = self._conn.execute(
-            """INSERT INTO goals
-               (user_id, description, target_muscle, target_movement,
-                target_date, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                goal.description,
-                goal.target_muscle.value if goal.target_muscle else None,
-                goal.target_movement.value if goal.target_movement else None,
-                goal.target_date.isoformat() if goal.target_date else None,
-                goal.status.value,
-                goal.created_at.isoformat(),
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO goals
+                   (user_id, description, target_muscle, target_movement,
+                    target_date, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    goal.description,
+                    goal.target_muscle.value if goal.target_muscle else None,
+                    goal.target_movement.value if goal.target_movement else None,
+                    goal.target_date.isoformat() if goal.target_date else None,
+                    goal.status.value,
+                    goal.created_at.isoformat(),
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def get_active_goals(self, user_id: int) -> list[Goal]:
-        cur = self._conn.execute(
-            "SELECT * FROM goals WHERE user_id = ? AND status = 'active'", (user_id,)
-        )
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM goals WHERE user_id = ? AND status = 'active'", (user_id,)
+            )
+            rows = cur.fetchall()
         goals = []
-        for row in cur.fetchall():
+        for row in rows:
             goals.append(
                 Goal(
                     description=row["description"],
@@ -222,47 +239,51 @@ class Database:
         return goals
 
     def update_goal_status(self, goal_id: int, status: GoalStatus) -> None:
-        self._conn.execute("UPDATE goals SET status = ? WHERE id = ?", (status.value, goal_id))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("UPDATE goals SET status = ? WHERE id = ?", (status.value, goal_id))
+            self._conn.commit()
 
     # ---- workout logs ----
 
     def log_workout(self, user_id: int, entry: WorkoutLogEntry) -> int:
-        cur = self._conn.execute(
-            """INSERT INTO workout_logs
-               (user_id, exercise_key, performed_at, sets, reps, weight, rpe, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                entry.exercise_key,
-                entry.performed_at.isoformat(),
-                entry.sets,
-                entry.reps,
-                entry.weight,
-                entry.rpe,
-                entry.notes,
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO workout_logs
+                   (user_id, exercise_key, performed_at, sets, reps, weight, rpe, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    entry.exercise_key,
+                    entry.performed_at.isoformat(),
+                    entry.sets,
+                    entry.reps,
+                    entry.weight,
+                    entry.rpe,
+                    entry.notes,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def get_recent_workouts(self, user_id: int, limit_sessions: int = 6) -> list[WorkoutLogEntry]:
         """Return log entries from the most recent N distinct session dates."""
-        cur = self._conn.execute(
-            """SELECT DISTINCT date(performed_at) as d FROM workout_logs
-               WHERE user_id = ? ORDER BY d DESC LIMIT ?""",
-            (user_id, limit_sessions),
-        )
-        session_dates = [row["d"] for row in cur.fetchall()]
-        if not session_dates:
-            return []
-        placeholders = ",".join("?" for _ in session_dates)
-        cur = self._conn.execute(
-            f"""SELECT * FROM workout_logs WHERE user_id = ?
-                AND date(performed_at) IN ({placeholders})
-                ORDER BY performed_at DESC""",
-            (user_id, *session_dates),
-        )
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT DISTINCT date(performed_at) as d FROM workout_logs
+                   WHERE user_id = ? ORDER BY d DESC LIMIT ?""",
+                (user_id, limit_sessions),
+            )
+            session_dates = [row["d"] for row in cur.fetchall()]
+            if not session_dates:
+                return []
+            placeholders = ",".join("?" for _ in session_dates)
+            cur = self._conn.execute(
+                f"""SELECT * FROM workout_logs WHERE user_id = ?
+                    AND date(performed_at) IN ({placeholders})
+                    ORDER BY performed_at DESC""",
+                (user_id, *session_dates),
+            )
+            rows = cur.fetchall()
         return [
             WorkoutLogEntry(
                 exercise_key=row["exercise_key"],
@@ -274,37 +295,39 @@ class Database:
                 notes=row["notes"],
                 log_id=row["id"],
             )
-            for row in cur.fetchall()
+            for row in rows
         ]
 
     # ---- readiness feedback ----
 
     def add_feedback(self, user_id: int, feedback: ReadinessFeedback) -> int:
-        cur = self._conn.execute(
-            """INSERT INTO readiness_feedback
-               (user_id, logged_at, sleep_quality, stress_level,
-                overall_soreness, motivation, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                feedback.logged_at.isoformat(),
-                feedback.sleep_quality,
-                feedback.stress_level,
-                feedback.overall_soreness,
-                feedback.motivation,
-                feedback.notes,
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO readiness_feedback
+                   (user_id, logged_at, sleep_quality, stress_level,
+                    overall_soreness, motivation, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    feedback.logged_at.isoformat(),
+                    feedback.sleep_quality,
+                    feedback.stress_level,
+                    feedback.overall_soreness,
+                    feedback.motivation,
+                    feedback.notes,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def get_latest_feedback(self, user_id: int) -> Optional[ReadinessFeedback]:
-        cur = self._conn.execute(
-            """SELECT * FROM readiness_feedback WHERE user_id = ?
-               ORDER BY logged_at DESC LIMIT 1""",
-            (user_id,),
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT * FROM readiness_feedback WHERE user_id = ?
+                   ORDER BY logged_at DESC LIMIT 1""",
+                (user_id,),
+            )
+            row = cur.fetchone()
         if not row:
             return None
         return ReadinessFeedback(
