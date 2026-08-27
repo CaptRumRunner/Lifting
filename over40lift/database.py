@@ -7,6 +7,7 @@ from models.py. Keeps the schema visible and the dependency footprint small.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -88,7 +89,8 @@ class Database:
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.execute("PRAGMA foreign_keys = ON;")
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
