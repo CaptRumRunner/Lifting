@@ -12,6 +12,19 @@ radio row — there are no dropdown/select boxes anywhere. Equipment tiles
 cycle neutral -> have it (green) -> don't have it (red) -> neutral.
 Soreness/injury tiles on the body diagram cycle
 neutral -> mild (yellow) -> moderate (orange) -> injury (red) -> neutral.
+
+Performance note: Streamlit already re-runs this whole script on every
+widget interaction — a button click doesn't need an explicit st.rerun()
+on top of that; adding one just doubles the round trip for no benefit.
+The one thing an extra rerun WOULD buy is making sure a change on one tab
+(e.g. toggling equipment) is reflected by a tab whose code runs earlier
+in the script (e.g. Recommend). Rather than pay for a second rerun, the
+mutating tabs (Equipment, Soreness, Goals, Readiness, Log Workout) are
+simply placed earlier in this file than Recommend, so Recommend always
+reads state that's already current for this run. Tab *display* order is
+controlled separately by the order passed to st.tabs() below, so the
+labels stay in the original order even though the code runs in a
+different order.
 """
 
 from __future__ import annotations
@@ -49,7 +62,6 @@ EQUIP_COLORS = {
     "green": ("#2f9e44", "#FFFFFF", "#1f7a34"),
     "red": ("#e03131", "#FFFFFF", "#b02525"),
 }
-EQUIP_ICON = {"neutral": "⚪", "green": "🟢", "red": "🔴"}
 
 SORENESS_CYCLE = ["neutral", "mild", "moderate", "injury"]
 SORENESS_COLORS = {
@@ -58,7 +70,6 @@ SORENESS_COLORS = {
     "moderate": ("#ff8c00", "#FFFFFF", "#cc7000"),
     "injury": ("#e03131", "#FFFFFF", "#b02525"),
 }
-SORENESS_ICON = {"neutral": "⚪", "mild": "🟡", "moderate": "🟠", "injury": "🔴"}
 SORENESS_LABEL = {"neutral": "OK", "mild": "Mild", "moderate": "Moderate", "injury": "Injury"}
 
 
@@ -113,52 +124,12 @@ with st.sidebar:
     user_id = db.get_or_create_user(name)
     st.success(f"Signed in as **{name}**")
 
+# Tabs are created here so the on-screen order/labels stay as before;
+# the code bodies below are written in a different order (see module
+# docstring) so mutations land before Recommend reads them.
 tab_recommend, tab_equipment, tab_soreness, tab_goals, tab_feedback, tab_log = st.tabs(
     ["Recommend", "Equipment", "Soreness", "Goals", "Readiness", "Log Workout"]
 )
-
-# ---- Recommend ----
-with tab_recommend:
-    st.subheader("Today's recommended session")
-    equipment = db.get_user_equipment(user_id)
-    soreness = db.get_current_soreness(user_id)
-    goals = db.get_active_goals(user_id)
-    recent_logs = db.get_recent_workouts(user_id)
-    feedback = db.get_latest_feedback(user_id)
-
-    if not equipment:
-        st.warning("No equipment set yet — set it in the Equipment tab for a real recommendation. Defaulting to bodyweight-only for now.")
-        equipment = {Equipment.BODYWEIGHT_ONLY.value}
-
-    plan = build_session_plan(
-        available_equipment=equipment,
-        soreness=soreness,
-        goals=goals,
-        recent_logs=recent_logs,
-        latest_feedback=feedback,
-    )
-
-    if feedback is None:
-        st.caption("No readiness check-in yet today — log one in the Readiness tab for light-day logic to kick in.")
-    else:
-        if plan.is_light_day:
-            st.error(f"Readiness score: {plan.cns_score}/5 — **Light day.** Volume and RPE are trimmed below.")
-        else:
-            st.info(f"Readiness score: {plan.cns_score}/5 — normal training day.")
-
-    if not plan.exercises:
-        st.warning("No exercises could be recommended. Check your equipment and soreness settings.")
-
-    for rec in plan.exercises:
-        with st.container(border=True):
-            st.markdown(f"**{rec.exercise.name}** — {rec.sets} sets × {rec.reps} reps @ RPE {rec.target_rpe}")
-            for reason in rec.reasons:
-                st.caption(f"• {reason}")
-
-    if plan.excluded_summary:
-        with st.expander("Why some exercises were swapped or skipped"):
-            for note in plan.excluded_summary:
-                st.write(f"- {note}")
 
 # ---- Equipment ----
 with tab_equipment:
@@ -182,14 +153,14 @@ with tab_equipment:
         for i, item in enumerate(items):
             css_key = f"eq_{user_id}_{item.value}"
             state = equip_states.get(item.value, "neutral")
-            css_states[css_key] = state
-            label = f"{EQUIP_ICON[state]} {item.value.replace('_', ' ').title()}"
+            label = item.value.replace("_", " ").title()
             with cols[i % 3]:
                 if st.button(label, key=css_key, use_container_width=True):
-                    equip_states[item.value] = next_state(state, EQUIP_CYCLE)
+                    state = next_state(state, EQUIP_CYCLE)
+                    equip_states[item.value] = state
                     have_set = {k for k, v in equip_states.items() if v == "green"}
                     db.set_user_equipment(user_id, have_set)
-                    st.rerun()
+            css_states[css_key] = state
 
     inject_tile_css(css_states, EQUIP_COLORS)
 
@@ -216,24 +187,23 @@ with tab_soreness:
     for i, muscle in enumerate(view_muscles):
         css_key = f"sore_{user_id}_{muscle.value}"
         state = sore_states.get(muscle.value, "neutral")
-        sore_css_states[css_key] = state
-        label = f"{SORENESS_ICON[state]} {muscle.value.replace('_', ' ').title()} ({SORENESS_LABEL[state]})"
+        label = muscle.value.replace("_", " ").title()
         with cols[i % 3]:
             if st.button(label, key=css_key, use_container_width=True):
-                new_state = next_state(state, SORENESS_CYCLE)
-                sore_states[muscle.value] = new_state
-                if new_state == "neutral":
+                state = next_state(state, SORENESS_CYCLE)
+                sore_states[muscle.value] = state
+                if state == "neutral":
                     db.clear_soreness(user_id, muscle)
                 else:
                     db.add_soreness_report(
                         user_id,
                         SorenessReport(
                             muscle_group=muscle,
-                            level=SorenessLevel(new_state),
+                            level=SorenessLevel(state),
                             reported_at=datetime.now(),
                         ),
                     )
-                st.rerun()
+        sore_css_states[css_key] = state
 
     # Also render CSS classes for muscles in the *other* view so their
     # colors stay correct/consistent once the user switches views.
@@ -283,7 +253,6 @@ with tab_goals:
                 ),
             )
             st.success("Goal saved.")
-            st.rerun()
 
     st.divider()
     st.subheader("Active goals")
@@ -314,7 +283,6 @@ with tab_feedback:
         )
         db.add_feedback(user_id, fb)
         st.success(f"Readiness score: {fb.cns_score}/5" + (" — light day recommended." if fb.is_light_day else ""))
-        st.rerun()
 
 # ---- Log workout ----
 with tab_log:
@@ -345,7 +313,6 @@ with tab_log:
             ),
         )
         st.success(f"Logged {EXERCISE_BY_KEY[exercise_key].name}.")
-        st.rerun()
 
     st.divider()
     st.subheader("Recent sessions")
@@ -359,3 +326,47 @@ with tab_log:
             f"- {entry.performed_at.strftime('%Y-%m-%d')} — {label}: "
             f"{entry.sets}×{entry.reps}" + (f" @ {entry.weight}lb" if entry.weight else "")
         )
+
+# ---- Recommend (code runs last so it reads state fresh from the tabs
+# above, but still displays first because of the order in st.tabs()) ----
+with tab_recommend:
+    st.subheader("Today's recommended session")
+    equipment = db.get_user_equipment(user_id)
+    soreness = db.get_current_soreness(user_id)
+    goals = db.get_active_goals(user_id)
+    recent_logs = db.get_recent_workouts(user_id)
+    feedback = db.get_latest_feedback(user_id)
+
+    if not equipment:
+        st.warning("No equipment set yet — set it in the Equipment tab for a real recommendation. Defaulting to bodyweight-only for now.")
+        equipment = {Equipment.BODYWEIGHT_ONLY.value}
+
+    plan = build_session_plan(
+        available_equipment=equipment,
+        soreness=soreness,
+        goals=goals,
+        recent_logs=recent_logs,
+        latest_feedback=feedback,
+    )
+
+    if feedback is None:
+        st.caption("No readiness check-in yet today — log one in the Readiness tab for light-day logic to kick in.")
+    else:
+        if plan.is_light_day:
+            st.error(f"Readiness score: {plan.cns_score}/5 — **Light day.** Volume and RPE are trimmed below.")
+        else:
+            st.info(f"Readiness score: {plan.cns_score}/5 — normal training day.")
+
+    if not plan.exercises:
+        st.warning("No exercises could be recommended. Check your equipment and soreness settings.")
+
+    for rec in plan.exercises:
+        with st.container(border=True):
+            st.markdown(f"**{rec.exercise.name}** — {rec.sets} sets × {rec.reps} reps @ RPE {rec.target_rpe}")
+            for reason in rec.reasons:
+                st.caption(f"• {reason}")
+
+    if plan.excluded_summary:
+        with st.expander("Why some exercises were swapped or skipped"):
+            for note in plan.excluded_summary:
+                st.write(f"- {note}")
